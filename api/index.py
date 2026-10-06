@@ -3,14 +3,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
-# CORS for any origin
+# Allow requests from every origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,6 +18,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Add the required CORS header to every response.
+@app.middleware("http")
+async def force_cors(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 
 class TelemetryRequest(BaseModel):
@@ -36,7 +44,7 @@ def load_telemetry() -> list[dict[str, Any]]:
 
     if isinstance(data, dict):
         for key in ("data", "records", "telemetry", "readings", "pings"):
-            if key in data and isinstance(data[key], list):
+            if isinstance(data.get(key), list):
                 return data[key]
 
     raise ValueError("Invalid telemetry.json format")
@@ -49,27 +57,15 @@ def get_field(record: dict[str, Any], *names: str):
     return None
 
 
-@app.get("/")
-def root():
-    return JSONResponse(
-        content={"status": "ok"},
-        headers={
-            "Access-Control-Allow-Origin": "*"
-        }
-    )
-
-
-@app.post("/api/telemetry")
-@app.post("/telemetry")
-def telemetry(request: TelemetryRequest):
-
+def calculate_metrics(request: TelemetryRequest):
     records = load_telemetry()
     result = {}
 
     for region in request.regions:
 
         region_records = [
-            r for r in records
+            r
+            for r in records
             if get_field(r, "region", "regions") == region
         ]
 
@@ -83,14 +79,14 @@ def telemetry(request: TelemetryRequest):
                 "latency",
                 "latency_ms",
                 "response_time",
-                "response_time_ms"
+                "response_time_ms",
             )
 
             uptime = get_field(
                 record,
                 "uptime",
                 "uptime_pct",
-                "uptime_percent"
+                "uptime_percent",
             )
 
             if latency is not None:
@@ -100,27 +96,55 @@ def telemetry(request: TelemetryRequest):
                 uptimes.append(float(uptime))
 
         result[region] = {
-            "avg_latency": (
-                float(np.mean(latencies))
-                if latencies else 0
-            ),
+            "avg_latency": float(np.mean(latencies)) if latencies else 0,
             "p95_latency": (
                 float(np.percentile(latencies, 95))
-                if latencies else 0
+                if latencies
+                else 0
             ),
-            "avg_uptime": (
-                float(np.mean(uptimes))
-                if uptimes else 0
-            ),
+            "avg_uptime": float(np.mean(uptimes)) if uptimes else 0,
             "breaches": sum(
-                1 for x in latencies
-                if x > request.threshold_ms
-            )
+                1 for value in latencies
+                if value > request.threshold_ms
+            ),
         }
 
+    return result
+
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+
+# Support the likely endpoint paths.
+@app.post("/")
+def telemetry_root(request: TelemetryRequest):
     return JSONResponse(
-        content=result,
-        headers={
-            "Access-Control-Allow-Origin": "*"
-        }
+        content=calculate_metrics(request),
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.post("/api")
+def telemetry_api(request: TelemetryRequest):
+    return JSONResponse(
+        content=calculate_metrics(request),
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.post("/api/telemetry")
+def telemetry_api_path(request: TelemetryRequest):
+    return JSONResponse(
+        content=calculate_metrics(request),
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.post("/telemetry")
+def telemetry_path(request: TelemetryRequest):
+    return JSONResponse(
+        content=calculate_metrics(request),
+        headers={"Access-Control-Allow-Origin": "*"},
     )
