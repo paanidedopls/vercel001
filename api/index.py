@@ -5,16 +5,17 @@ from typing import Any
 import numpy as np
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
-# CORS
+# CORS for any origin
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -50,7 +51,12 @@ def get_field(record: dict[str, Any], *names: str):
 
 @app.get("/")
 def root():
-    return {"status": "ok"}
+    return JSONResponse(
+        content={"status": "ok"},
+        headers={
+            "Access-Control-Allow-Origin": "*"
+        }
+    )
 
 
 @app.post("/api/telemetry")
@@ -94,13 +100,27 @@ def telemetry(request: TelemetryRequest):
                 uptimes.append(float(uptime))
 
         result[region] = {
-            "avg_latency": float(np.mean(latencies)) if latencies else 0,
-            "p95_latency": float(np.percentile(latencies, 95)) if latencies else 0,
-            "avg_uptime": float(np.mean(uptimes)) if uptimes else 0,
+            "avg_latency": (
+                float(np.mean(latencies))
+                if latencies else 0
+            ),
+            "p95_latency": (
+                float(np.percentile(latencies, 95))
+                if latencies else 0
+            ),
+            "avg_uptime": (
+                float(np.mean(uptimes))
+                if uptimes else 0
+            ),
             "breaches": sum(
                 1 for x in latencies
                 if x > request.threshold_ms
             )
         }
 
-    return result
+    return JSONResponse(
+        content=result,
+        headers={
+            "Access-Control-Allow-Origin": "*"
+        }
+    )
