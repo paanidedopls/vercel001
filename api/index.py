@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -11,22 +12,32 @@ from pydantic import BaseModel
 app = FastAPI()
 
 
-# Explicit CORS headers
+# Standard FastAPI CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Explicit CORS headers matching the working configuration
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Expose-Headers": "Access-Control-Allow-Origin",
 }
 
 
-# Add CORS headers to every response, including OPTIONS
+# Add CORS headers to every response
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
-
     if request.method == "OPTIONS":
         return JSONResponse(
             content={"ok": True},
-            headers=CORS_HEADERS,
+            headers=CORS_HEADERS
         )
 
     response = await call_next(request)
@@ -88,14 +99,14 @@ def calculate_metrics(request: TelemetryRequest):
                 "latency",
                 "latency_ms",
                 "response_time",
-                "response_time_ms",
+                "response_time_ms"
             )
 
             uptime = get_field(
                 record,
                 "uptime",
                 "uptime_pct",
-                "uptime_percent",
+                "uptime_percent"
             )
 
             if latency is not None:
@@ -105,18 +116,26 @@ def calculate_metrics(request: TelemetryRequest):
                 uptimes.append(float(uptime))
 
         result[region] = {
-            "avg_latency": float(np.mean(latencies)) if latencies else 0,
+            "avg_latency": (
+                float(np.mean(latencies))
+                if latencies
+                else 0
+            ),
             "p95_latency": (
                 float(np.percentile(latencies, 95))
                 if latencies
                 else 0
             ),
-            "avg_uptime": float(np.mean(uptimes)) if uptimes else 0,
+            "avg_uptime": (
+                float(np.mean(uptimes))
+                if uptimes
+                else 0
+            ),
             "breaches": sum(
                 1
                 for value in latencies
                 if value > request.threshold_ms
-            ),
+            )
         }
 
     return result
@@ -126,7 +145,7 @@ def calculate_metrics(request: TelemetryRequest):
 def root():
     return JSONResponse(
         content={"status": "ok"},
-        headers=CORS_HEADERS,
+        headers=CORS_HEADERS
     )
 
 
@@ -134,7 +153,7 @@ def root():
 def telemetry_api(request: TelemetryRequest):
     return JSONResponse(
         content=calculate_metrics(request),
-        headers=CORS_HEADERS,
+        headers=CORS_HEADERS
     )
 
 
@@ -142,5 +161,13 @@ def telemetry_api(request: TelemetryRequest):
 def telemetry(request: TelemetryRequest):
     return JSONResponse(
         content=calculate_metrics(request),
-        headers=CORS_HEADERS,
+        headers=CORS_HEADERS
+    )
+
+
+@app.post("/")
+def telemetry_root(request: TelemetryRequest):
+    return JSONResponse(
+        content=calculate_metrics(request),
+        headers=CORS_HEADERS
     )
