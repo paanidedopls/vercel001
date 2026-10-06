@@ -3,30 +3,20 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-
 app = FastAPI()
 
-
-# CORS configuration
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
 )
-
-
-# Explicitly guarantee the required CORS response header
-@app.middleware("http")
-async def add_cors_header(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    return response
 
 
 class TelemetryRequest(BaseModel):
@@ -35,9 +25,9 @@ class TelemetryRequest(BaseModel):
 
 
 def load_telemetry() -> list[dict[str, Any]]:
-    data_path = Path(__file__).resolve().parent.parent / "telemetry.json"
+    path = Path(__file__).resolve().parent.parent / "telemetry.json"
 
-    with open(data_path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     if isinstance(data, list):
@@ -48,7 +38,7 @@ def load_telemetry() -> list[dict[str, Any]]:
             if key in data and isinstance(data[key], list):
                 return data[key]
 
-    raise ValueError("Could not find telemetry records in telemetry.json")
+    raise ValueError("Invalid telemetry.json format")
 
 
 def get_field(record: dict[str, Any], *names: str):
@@ -58,10 +48,6 @@ def get_field(record: dict[str, Any], *names: str):
     return None
 
 
-def percentile_95(values: list[float]) -> float:
-    return float(np.percentile(values, 95))
-
-
 @app.get("/")
 def root():
     return {"status": "ok"}
@@ -69,28 +55,17 @@ def root():
 
 @app.post("/api/telemetry")
 @app.post("/telemetry")
-def telemetry_metrics(request: TelemetryRequest):
+def telemetry(request: TelemetryRequest):
 
     records = load_telemetry()
-
     result = {}
 
     for region in request.regions:
 
         region_records = [
-            record
-            for record in records
-            if get_field(record, "region", "regions") == region
+            r for r in records
+            if get_field(r, "region", "regions") == region
         ]
-
-        if not region_records:
-            result[region] = {
-                "avg_latency": 0,
-                "p95_latency": 0,
-                "avg_uptime": 0,
-                "breaches": 0
-            }
-            continue
 
         latencies = []
         uptimes = []
@@ -120,11 +95,11 @@ def telemetry_metrics(request: TelemetryRequest):
 
         result[region] = {
             "avg_latency": float(np.mean(latencies)) if latencies else 0,
-            "p95_latency": percentile_95(latencies) if latencies else 0,
+            "p95_latency": float(np.percentile(latencies, 95)) if latencies else 0,
             "avg_uptime": float(np.mean(uptimes)) if uptimes else 0,
             "breaches": sum(
-                1 for value in latencies
-                if value > request.threshold_ms
+                1 for x in latencies
+                if x > request.threshold_ms
             )
         }
 
