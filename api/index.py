@@ -4,27 +4,36 @@ from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+
 app = FastAPI()
 
-# Allow requests from every origin.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+# Explicit CORS headers
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+}
 
 
-# Add the required CORS header to every response.
+# Add CORS headers to every response, including OPTIONS
 @app.middleware("http")
-async def force_cors(request: Request, call_next):
+async def cors_middleware(request: Request, call_next):
+
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            content={"ok": True},
+            headers=CORS_HEADERS,
+        )
+
     response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
+
+    for key, value in CORS_HEADERS.items():
+        response.headers[key] = value
+
     return response
 
 
@@ -44,7 +53,7 @@ def load_telemetry() -> list[dict[str, Any]]:
 
     if isinstance(data, dict):
         for key in ("data", "records", "telemetry", "readings", "pings"):
-            if isinstance(data.get(key), list):
+            if key in data and isinstance(data[key], list):
                 return data[key]
 
     raise ValueError("Invalid telemetry.json format")
@@ -64,9 +73,9 @@ def calculate_metrics(request: TelemetryRequest):
     for region in request.regions:
 
         region_records = [
-            r
-            for r in records
-            if get_field(r, "region", "regions") == region
+            record
+            for record in records
+            if get_field(record, "region", "regions") == region
         ]
 
         latencies = []
@@ -104,7 +113,8 @@ def calculate_metrics(request: TelemetryRequest):
             ),
             "avg_uptime": float(np.mean(uptimes)) if uptimes else 0,
             "breaches": sum(
-                1 for value in latencies
+                1
+                for value in latencies
                 if value > request.threshold_ms
             ),
         }
@@ -114,37 +124,23 @@ def calculate_metrics(request: TelemetryRequest):
 
 @app.get("/")
 def root():
-    return {"status": "ok"}
-
-
-# Support the likely endpoint paths.
-@app.post("/")
-def telemetry_root(request: TelemetryRequest):
     return JSONResponse(
-        content=calculate_metrics(request),
-        headers={"Access-Control-Allow-Origin": "*"},
-    )
-
-
-@app.post("/api")
-def telemetry_api(request: TelemetryRequest):
-    return JSONResponse(
-        content=calculate_metrics(request),
-        headers={"Access-Control-Allow-Origin": "*"},
+        content={"status": "ok"},
+        headers=CORS_HEADERS,
     )
 
 
 @app.post("/api/telemetry")
-def telemetry_api_path(request: TelemetryRequest):
+def telemetry_api(request: TelemetryRequest):
     return JSONResponse(
         content=calculate_metrics(request),
-        headers={"Access-Control-Allow-Origin": "*"},
+        headers=CORS_HEADERS,
     )
 
 
 @app.post("/telemetry")
-def telemetry_path(request: TelemetryRequest):
+def telemetry(request: TelemetryRequest):
     return JSONResponse(
         content=calculate_metrics(request),
-        headers={"Access-Control-Allow-Origin": "*"},
+        headers=CORS_HEADERS,
     )
